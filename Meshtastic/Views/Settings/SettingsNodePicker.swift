@@ -110,6 +110,7 @@ struct SettingsNodePicker: View {
 							.font(.caption)
 							.foregroundStyle(.secondary)
 					}
+				}
 			} icon: {
 				Image(systemName: "circle")
 			}
