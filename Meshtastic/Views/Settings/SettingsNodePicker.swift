@@ -46,15 +46,16 @@ struct SettingsNodePicker: View {
 				}
 				.buttonStyle(.plain)
 			}
+
+			if filteredNodes.isEmpty {
+				Text("No matching nodes")
+					.foregroundStyle(.secondary)
+					.frame(maxWidth: .infinity, alignment: .center)
+			}
 		}
 		.searchable(text: $searchText, prompt: "Search nodes")
 		.navigationTitle("Configure Node")
 		.navigationBarTitleDisplayMode(.inline)
-		.overlay {
-			if filteredNodes.isEmpty {
-				ContentUnavailableView.search(text: searchText)
-			}
-		}
 	}
 
 	@ViewBuilder
