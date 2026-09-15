@@ -1,0 +1,87 @@
+name: Apply remote admin UX patch
+
+on:
+  push:
+    branches:
+      - feature/remote-admin-ux
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/remote-admin-ux
+
+      - name: Apply remote admin UX changes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{path}: expected one match, found {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "Meshtastic/Router/Router.swift",
+              "\t@Published\n\tvar settingsPath: [SettingsNavigationState] = []\n\n\t@Published\n\tvar discoveryShowHistory: Bool = false",
+              "\t@Published\n\tvar settingsPath: [SettingsNavigationState] = []\n\n\t/// One-shot target used when Node Details hands a remote node directly to Settings.\n\t/// Settings consumes and clears this after selecting the node in the existing admin flow.\n\t@Published\n\tvar remoteAdminTargetNodeNum: Int64?\n\n\t@Published\n\tvar discoveryShowHistory: Bool = false"
+          )
+
+          replace_once(
+              "Meshtastic/Router/Router.swift",
+              "\tfunc navigateToNodeDetail(nodeNum: Int64) {\n\t\tLogger.services.info(\"🛣 [App] Direct route to node detail \\(nodeNum, privacy: .public)\")\n\t\tselectedTab = .nodes\n\t\tselectedNodeNum = nodeNum\n\t}\n\n\tfunc popToRoot(tab: NavigationState.Tab) {",
+              "\tfunc navigateToNodeDetail(nodeNum: Int64) {\n\t\tLogger.services.info(\"🛣 [App] Direct route to node detail \\(nodeNum, privacy: .public)\")\n\t\tselectedTab = .nodes\n\t\tselectedNodeNum = nodeNum\n\t}\n\n\t/// Opens the existing Settings remote-admin flow with a specific node preselected.\n\tfunc navigateToRemoteAdmin(nodeNum: Int64) {\n\t\tLogger.services.info(\"🛣 [App] Direct route to remote admin for \\(nodeNum, privacy: .public)\")\n\t\tremoteAdminTargetNodeNum = nodeNum\n\t\tsettingsPath = []\n\t\tselectedTab = .settings\n\t}\n\n\tfunc popToRoot(tab: NavigationState.Tab) {"
+          )
+
+          replace_once(
+              "Meshtastic/Views/Settings/Settings.swift",
+              "\t/// Nodes for the admin / configuration picker, ordered favorites-first while\n\t/// preserving the snapshot fetch's `lastHeard`-descending order within each group. The\n\t/// favorite-on-top behavior can't be expressed as a SwiftData `@Query` sort\n\t/// because `favorite` is a `Bool` and `Bool` isn't `Comparable` (so it's not a\n\t/// valid `SortDescriptor` key); it's applied here as a cheap stable partition over value data.\n\tprivate var sortedNodes: [SettingsNodeSnapshot] {\n\t\tnodes.filter(\\.favorite) + nodes.filter { !$0.favorite }\n\t}",
+              "\t/// Nodes for the admin/configuration picker. Keep the physically connected node first,\n\t/// then nodes that are already ready for Remote Admin, then the remaining nodes. Within each\n\t/// group favorites are promoted and names are sorted alphabetically. This makes a known remote\n\t/// admin target findable without scrolling through a last-heard ordered mesh.\n\tprivate var sortedNodes: [SettingsNodeSnapshot] {\n\t\tlet activeNodeNum = Int64(accessoryManager.activeDeviceNum ?? 0)\n\t\treturn nodes.sorted { lhs, rhs in\n\t\t\tlet lhsConnected = lhs.num == activeNodeNum\n\t\t\tlet rhsConnected = rhs.num == activeNodeNum\n\t\t\tif lhsConnected != rhsConnected { return lhsConnected }\n\n\t\t\tlet lhsAdminReady = UserDefaults.enableAdministration\n\t\t\t\t? (lhs.canRemoteAdmin && lhs.hasSessionPasskey)\n\t\t\t\t: lhs.hasMetadata\n\t\t\tlet rhsAdminReady = UserDefaults.enableAdministration\n\t\t\t\t? (rhs.canRemoteAdmin && rhs.hasSessionPasskey)\n\t\t\t\t: rhs.hasMetadata\n\t\t\tif lhsAdminReady != rhsAdminReady { return lhsAdminReady }\n\n\t\t\tif lhs.favorite != rhs.favorite { return lhs.favorite }\n\n\t\t\tlet lhsName = lhs.userLongName ?? \"Unknown\".localized\n\t\t\tlet rhsName = rhs.userLongName ?? \"Unknown\".localized\n\t\t\tlet comparison = lhsName.localizedCaseInsensitiveCompare(rhsName)\n\t\t\tif comparison != .orderedSame { return comparison == .orderedAscending }\n\t\t\treturn lhs.num < rhs.num\n\t\t}\n\t}"
+          )
+
+          replace_once(
+              "Meshtastic/Views/Settings/Settings.swift",
+              "\tprivate func liveNode(for nodeNum: Int) -> NodeInfoEntity? {\n\t\tguard nodeNum > 0,\n\t\t\tlet node = getNodeInfo(id: Int64(nodeNum), context: context),\n\t\t\tnode.modelContext != nil,\n\t\t\t!node.isDeleted\n\t\telse { return nil }\n\t\treturn node\n\t}\n\n\t@State private var selectedNode: Int = 0",
+              "\tprivate func liveNode(for nodeNum: Int) -> NodeInfoEntity? {\n\t\tguard nodeNum > 0,\n\t\t\tlet node = getNodeInfo(id: Int64(nodeNum), context: context),\n\t\t\tnode.modelContext != nil,\n\t\t\t!node.isDeleted\n\t\telse { return nil }\n\t\treturn node\n\t}\n\n\t/// Consumes a Node Details -> Settings handoff once the node snapshot is available.\n\t/// Assigning `selectedNode` deliberately reuses the existing onChange handler, including\n\t/// metadata/session setup, instead of creating a second Remote Admin implementation.\n\tprivate func applyPendingRemoteAdminTarget() {\n\t\tguard let target = router.remoteAdminTargetNodeNum,\n\t\t\tnodeSnapshot(for: Int(target)) != nil else { return }\n\n\t\tif let activeDeviceNum = accessoryManager.activeDeviceNum {\n\t\t\tpreferredNodeNum = Int(activeDeviceNum)\n\t\t}\n\t\tselectedNode = Int(target)\n\t\trouter.remoteAdminTargetNodeNum = nil\n\t}\n\n\t@State private var selectedNode: Int = 0"
+          )
+
+          replace_once(
+              "Meshtastic/Views/Settings/Settings.swift",
+              "\t\t\t.onAppear {\n\t\t\t\t// If the selection hasn't be initialized yet, try to initalize it.\n\t\t\t\t// If we are not fully connected yet, then setSelectedNode will\n\t\t\t\t// not select the node and it will remain 0\n\t\t\t\trefreshNodes()\n\t\t\t\tif self.preferredNodeNum <= 0 {\n\t\t\t\t\tself.preferredNodeNum = UserDefaults.preferredPeripheralNum\n\t\t\t\t\tsetSelectedNode(to: UserDefaults.preferredPeripheralNum)\n\t\t\t\t}\n\t\t\t}",
+              "\t\t\t.onAppear {\n\t\t\t\t// If the selection hasn't be initialized yet, try to initalize it.\n\t\t\t\t// If we are not fully connected yet, then setSelectedNode will\n\t\t\t\t// not select the node and it will remain 0\n\t\t\t\trefreshNodes()\n\t\t\t\tif self.preferredNodeNum <= 0 {\n\t\t\t\t\tself.preferredNodeNum = UserDefaults.preferredPeripheralNum\n\t\t\t\t\tsetSelectedNode(to: UserDefaults.preferredPeripheralNum)\n\t\t\t\t}\n\t\t\t\tapplyPendingRemoteAdminTarget()\n\t\t\t}"
+          )
+
+          replace_once(
+              "Meshtastic/Views/Settings/Settings.swift",
+              "\t\t\t\tguard router.selectedTab == .settings else { return }\n\t\t\t\trefreshNodes()\n\t\t\t\twhile !Task.isCancelled {",
+              "\t\t\t\tguard router.selectedTab == .settings else { return }\n\t\t\t\trefreshNodes()\n\t\t\t\tapplyPendingRemoteAdminTarget()\n\t\t\t\twhile !Task.isCancelled {"
+          )
+
+          replace_once(
+              "Meshtastic/Views/Settings/Settings.swift",
+              "\t\t\t\t\tguard !Task.isCancelled else { break }\n\t\t\t\t\trefreshNodes()\n\t\t\t\t}\n\t\t\t}",
+              "\t\t\t\t\tguard !Task.isCancelled else { break }\n\t\t\t\t\trefreshNodes()\n\t\t\t\t\tapplyPendingRemoteAdminTarget()\n\t\t\t\t}\n\t\t\t}"
+          )
+
+          replace_once(
+              "Meshtastic/Views/Nodes/Helpers/NodeDetail.swift",
+              "\t\t\t\t\tRequestLocalStatsButton(node: node)\n\t\t\t\t\tExchangeUserInfoButton(\n\t\t\t\t\t\tnode: node,\n\t\t\t\t\t\tconnectedNode: connectedNode\n\t\t\t\t\t)\n\t\t\t\t\tTraceRouteButton(\n\t\t\t\t\t\tnode: node\n\t\t\t\t\t)",
+              "\t\t\t\t\tRequestLocalStatsButton(node: node)\n\t\t\t\t\tif UserDefaults.enableAdministration,\n\t\t\t\t\t   node.sessionPasskey != nil || currentUser?.pkiEncrypted == true {\n\t\t\t\t\t\tButton {\n\t\t\t\t\t\t\trouter.navigateToRemoteAdmin(nodeNum: nodeNum)\n\t\t\t\t\t\t} label: {\n\t\t\t\t\t\t\tLabel(\n\t\t\t\t\t\t\t\tnode.sessionPasskey != nil ? \"Remote PKI Admin\" : \"Request PKI Admin\",\n\t\t\t\t\t\t\t\tsystemImage: node.sessionPasskey != nil ? \"av.remote\" : \"rectangle.and.hand.point.up.left\"\n\t\t\t\t\t\t\t)\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t\tExchangeUserInfoButton(\n\t\t\t\t\t\tnode: node,\n\t\t\t\t\t\tconnectedNode: connectedNode\n\t\t\t\t\t)\n\t\t\t\t\tTraceRouteButton(\n\t\t\t\t\t\tnode: node\n\t\t\t\t\t)"
+          )
+
+      - name: Commit patch
+        run: |
+          rm -f .github/workflows/apply-remote-admin-ux.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Meshtastic/Router/Router.swift Meshtastic/Views/Settings/Settings.swift Meshtastic/Views/Nodes/Helpers/NodeDetail.swift .github/workflows/apply-remote-admin-ux.yml
+          git commit -m "feat: improve remote admin navigation"
+          git push origin HEAD:feature/remote-admin-ux
