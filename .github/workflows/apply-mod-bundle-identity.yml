@@ -1,0 +1,81 @@
+name: Apply separate mod app identity
+
+on:
+  push:
+    branches:
+      - feature/remote-admin-ux
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/remote-admin-ux
+
+      - name: Apply mod bundle identity
+        shell: python
+        run: |
+          from pathlib import Path
+
+          old_id = "gvh.MeshtasticClient"
+          new_id = "com.niccomale.meshtasticmod"
+
+          # project.yml is the source of truth for the generated Xcode project.
+          project = Path("project.yml")
+          text = project.read_text()
+          if old_id not in text:
+              raise RuntimeError("Expected Meshtastic bundle id not found in project.yml")
+          text = text.replace(old_id, new_id)
+          text = text.replace('INFOPLIST_KEY_CFBundleDisplayName: "Meshtastic"', 'INFOPLIST_KEY_CFBundleDisplayName: "Meshtastic Mod"')
+          project.write_text(text)
+
+          # Keep the app's explicit Info.plist consistent with the generated build setting.
+          info = Path("Meshtastic/Info.plist")
+          text = info.read_text()
+          text = text.replace(old_id, new_id)
+          text = text.replace("<string>Meshtastic</string>", "<string>Meshtastic Mod</string>", 1)
+          info.write_text(text)
+
+          # The Messages extension shares a dedicated keychain access group with the app.
+          msg_info = Path("MeshtasticMessages/Info.plist")
+          text = msg_info.read_text().replace(old_id, new_id)
+          text = text.replace("<string>Meshtastic</string>", "<string>Meshtastic Mod</string>", 1)
+          msg_info.write_text(text)
+
+          for rel in [
+              "Meshtastic/Meshtastic.entitlements",
+              "Meshtastic/Meshtastic-Catalyst.entitlements",
+              "MeshtasticMessages/MeshtasticMessages.entitlements",
+          ]:
+              p = Path(rel)
+              p.write_text(p.read_text().replace(old_id, new_id))
+
+      - name: Install pinned XcodeGen
+        run: |
+          version=$(tr -d '[:space:]' < .xcodegen-version)
+          curl -fsSL -o /tmp/xcodegen.zip \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${version}/xcodegen.zip"
+          unzip -q /tmp/xcodegen.zip -d /tmp/xcodegen-dist
+          echo "/tmp/xcodegen-dist/xcodegen/bin" >> "$GITHUB_PATH"
+
+      - name: Regenerate Xcode project
+        run: xcodegen generate
+
+      - name: Commit identity changes
+        run: |
+          rm -f .github/workflows/apply-mod-bundle-identity.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add project.yml Meshtastic.xcodeproj \
+            Meshtastic/Info.plist \
+            Meshtastic/Meshtastic.entitlements \
+            Meshtastic/Meshtastic-Catalyst.entitlements \
+            MeshtasticMessages/Info.plist \
+            MeshtasticMessages/MeshtasticMessages.entitlements \
+            .github/workflows/apply-mod-bundle-identity.yml
+          git commit -m "build: install fork as Meshtastic Mod"
+          git push origin HEAD:feature/remote-admin-ux
