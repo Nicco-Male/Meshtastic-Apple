@@ -25,6 +25,7 @@ struct SettingsNodeSnapshot: Identifiable, Equatable {
 	let hasMetadata: Bool
 	let hasTAKConfig: Bool
 	let userLongName: String?
+	let userShortName: String?
 	let userIsLicensed: Bool
 	let userIsPkiEncrypted: Bool
 	let role: Int32?
@@ -46,6 +47,7 @@ struct SettingsNodeSnapshot: Identifiable, Equatable {
 			user.modelContext != nil,
 			!user.isDeleted {
 			userLongName = user.longName
+			userShortName = user.shortName
 			userIsLicensed = user.isLicensed
 			userIsPkiEncrypted = user.pkiEncrypted
 			let userRole = user.role
@@ -60,6 +62,7 @@ struct SettingsNodeSnapshot: Identifiable, Equatable {
 			}
 		} else {
 			userLongName = nil
+			userShortName = nil
 			userIsLicensed = false
 			userIsPkiEncrypted = false
 			if let deviceConfig = node.deviceConfig,
@@ -709,56 +712,24 @@ struct Settings: View {
 					if accessoryManager.isConnected {
 						Section("Configure") {
 							if node.canRemoteAdmin {
-								Picker("Node", selection: $selectedNode) {
-									if selectedNode == 0 {
-										Text("Connect to a Node").tag(0)
-									}
-									ForEach(sortedNodes) { node in
-										/// Connected Node
-										if node.num == accessoryManager.activeDeviceNum ?? 0 {
-											Label {
-												Text("Connected") + Text(verbatim: ": \(node.userLongName?.addingVariationSelectors ?? "Unknown".localized)")
-											} icon: {
-												accessoryManager.activeConnection?.device.transportType.icon ?? Image(systemName: "questionmark.circle")
-											}
-											.tag(Int(node.num))
-										} else if node.canRemoteAdmin && UserDefaults.enableAdministration && node.hasSessionPasskey { /// Nodes using the new PKI system
-											Label {
-												Text("Remote PKI Admin: \(node.userLongName ?? "Unknown".localized)")
-											} icon: {
-												Image(systemName: "av.remote")
-											}
-											.font(.caption2)
-											.tag(Int(node.num))
-										} else if !UserDefaults.enableAdministration && node.hasMetadata { /// Nodes using the old admin system
-											Label {
-												Text("Remote Legacy Admin: \(node.userLongName ?? "Unknown".localized)")
-											} icon: {
-												Image(systemName: "av.remote")
-											}
-											.tag(Int(node.num))
-										} else if UserDefaults.enableAdministration && node.userIsPkiEncrypted {
-											Label {
-												Text("Request PKI Admin: \(node.userLongName?.addingVariationSelectors ?? "Unknown".localized)")
-											} icon: {
-												Image(systemName: "rectangle.and.hand.point.up.left")
-											}
-											.tag(Int(node.num))
-										} else if !UserDefaults.enableAdministration {
-											Label {
-												Text("Request Legacy Admin: \(node.userLongName?.addingVariationSelectors ?? "Unknown".localized)")
-											} icon: {
-												Image(systemName: "rectangle.and.hand.point.up.left")
-											}
-											.tag(Int(node.num))
-									}
-								}
-								}
-								.pickerStyle(.navigationLink)
-								.onChange(of: selectedNode) { _, newValue in
-									handleSelectedNodeChange(newValue)
-								}
-								TipView(AdminChannelTip(), arrowEdge: .top)
+								NavigationLink {
+					SettingsNodePicker(
+						nodes: sortedNodes,
+						selectedNode: $selectedNode
+					)
+				} label: {
+					HStack {
+						Text("Node")
+						Spacer()
+						Text(nodeSnapshot(for: selectedNode)?.userLongName?.addingVariationSelectors ?? "Connect to a Node".localized)
+							.foregroundStyle(.secondary)
+							.lineLimit(1)
+					}
+				}
+				.onChange(of: selectedNode) { _, newValue in
+					handleSelectedNodeChange(newValue)
+				}
+				TipView(AdminChannelTip(), arrowEdge: .top)
 									.tipViewStyle(PersistentTipStyle())
 									.tipBackground(colorScheme == .dark ? Color(.systemBackground) : Color(.secondarySystemBackground))
 									.listRowSeparator(.hidden)
