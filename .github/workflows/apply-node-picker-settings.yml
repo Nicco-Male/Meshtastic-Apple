@@ -1,0 +1,51 @@
+name: Apply settings node picker integration
+
+on:
+  push:
+    branches:
+      - feature/remote-admin-ux
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/remote-admin-ux
+
+      - name: Patch Settings.swift
+        shell: python
+        run: |
+          import base64
+          from pathlib import Path
+
+          path = Path("Meshtastic/Views/Settings/Settings.swift")
+          text = path.read_text()
+          pairs = [
+              ("CWxldCBoYXNUQUtDb25maWc6IEJvb2wKCWxldCB1c2VyTG9uZ05hbWU6IFN0cmluZz8KCWxldCB1c2VySXNMaWNlbnNlZDogQm9vbA==", "CWxldCBoYXNUQUtDb25maWc6IEJvb2wKCWxldCB1c2VyTG9uZ05hbWU6IFN0cmluZz8KCWxldCB1c2VyU2hvcnROYW1lOiBTdHJpbmc/CglsZXQgdXNlcklzTGljZW5zZWQ6IEJvb2w="),
+              ("CQkJdXNlckxvbmdOYW1lID0gdXNlci5sb25nTmFtZQoJCQl1c2VySXNMaWNlbnNlZCA9IHVzZXIuaXNMaWNlbnNlZA==", "CQkJdXNlckxvbmdOYW1lID0gdXNlci5sb25nTmFtZQoJCQl1c2VyU2hvcnROYW1lID0gdXNlci5zaG9ydE5hbWUKCQkJdXNlcklzTGljZW5zZWQgPSB1c2VyLmlzTGljZW5zZWQ="),
+              ("CQl9IGVsc2UgewoJCQl1c2VyTG9uZ05hbWUgPSBuaWwKCQkJdXNlcklzTGljZW5zZWQgPSBmYWxzZQ==", "CQl9IGVsc2UgewoJCQl1c2VyTG9uZ05hbWUgPSBuaWwKCQkJdXNlclNob3J0TmFtZSA9IG5pbAoJCQl1c2VySXNMaWNlbnNlZCA9IGZhbHNl"),
+              ("CQkJCVBpY2tlcigiTm9kZSIsIHNlbGVjdGlvbjogJHNlbGVjdGVkTm9kZSkgewoJCQkJCWlmIHNlbGVjdGVkTm9kZSA9PSAwIHsKCQkJCQkJVGV4dCgiQ29ubmVjdCB0byBhIE5vZGUiKS50YWcoMCkKCQkJCQl9CgkJCQkJRm9yRWFjaChzb3J0ZWROb2RlcykgeyBub2RlIGluCgkJCQkJCS8vLyBDb25uZWN0ZWQgTm9kZQoJCQkJCQlpZiBub2RlLm51bSA9PSBhY2Nlc3NvcnlNYW5hZ2VyLmFjdGl2ZURldmljZU51bSA/PyAwIHsKCQkJCQkJCUxhYmVsIHsKCQkJCQkJCQlUZXh0KCJDb25uZWN0ZWQiKSArIFRleHQodmVyYmF0aW06ICI6IFwobm9kZS51c2VyTG9uZ05hbWU/LmFkZGluZ1ZhcmlhdGlvblNlbGVjdG9ycyA/PyAiVW5rbm93biIubG9jYWxpemVkKSIpCgkJCQkJCQl9IGljb246IHsKCQkJCQkJCQlhY2Nlc3NvcnlNYW5hZ2VyLmFjdGl2ZUNvbm5lY3Rpb24/LmRldmljZS50cmFuc3BvcnRUeXBlLmljb24gPz8gSW1hZ2Uoc3lzdGVtTmFtZTogInF1ZXN0aW9ubWFyay5jaXJjbGUiKQoJCQkJCQkJfQoJCQkJCQkJLnRhZyhJbnQobm9kZS5udW0pKQoJCQkJCQl9IGVsc2UgaWYgbm9kZS5jYW5SZW1vdGVBZG1pbiAmJiBVc2VyRGVmYXVsdHMuZW5hYmxlQWRtaW5pc3RyYXRpb24gJiYgbm9kZS5oYXNTZXNzaW9uUGFzc2tleSB7IC8vLyBOb2RlcyB1c2luZyB0aGUgbmV3IFBLSSBzeXN0ZW0KCQkJCQkJCUxhYmVsIHsKCQkJCQkJCQlUZXh0KCJSZW1vdGUgUEtJIEFkbWluOiBcKG5vZGUudXNlckxvbmdOYW1lID8/ICJVbmtub3duIi5sb2NhbGl6ZWQpIikKCQkJCQkJCX0gaWNvbjogewoJCQkJCQkJCUltYWdlKHN5c3RlbU5hbWU6ICJhdi5yZW1vdGUiKQoJCQkJCQkJfQoJCQkJCQkJLmZvbnQoLmNhcHRpb24yKQoJCQkJCQkJLnRhZyhJbnQobm9kZS5udW0pKQoJCQkJCQl9IGVsc2UgaWYgIVVzZXJEZWZhdWx0cy5lbmFibGVBZG1pbmlzdHJhdGlvbiAmJiBub2RlLmhhc01ldGFkYXRhIHsgLy8vIE5vZGVzIHVzaW5nIHRoZSBvbGQgYWRtaW4gc3lzdGVtCgkJCQkJCQlMYWJlbCB7CgkJCQkJCQkJVGV4dCgiUmVtb3RlIExlZ2FjeSBBZG1pbjogXChub2RlLnVzZXJMb25nTmFtZSA/PyAiVW5rbm93biIubG9jYWxpemVkKSIpCgkJCQkJCQl9IGljb246IHsKCQkJCQkJCQlJbWFnZShzeXN0ZW1OYW1lOiAiYXYucmVtb3RlIikKCQkJCQkJCX0KCQkJCQkJCS50YWcoSW50KG5vZGUubnVtKSkKCQkJCQkJfSBlbHNlIGlmIFVzZXJEZWZhdWx0cy5lbmFibGVBZG1pbmlzdHJhdGlvbiAmJiBub2RlLnVzZXJJc1BraUVuY3J5cHRlZCB7CgkJCQkJCQlMYWJlbCB7CgkJCQkJCQkJVGV4dCgiUmVxdWVzdCBQS0kgQWRtaW46IFwobm9kZS51c2VyTG9uZ05hbWU/LmFkZGluZ1ZhcmlhdGlvblNlbGVjdG9ycyA/PyAiVW5rbm93biIubG9jYWxpemVkKSIpCgkJCQkJCQl9IGljb246IHsKCQkJCQkJCQlJbWFnZShzeXN0ZW1OYW1lOiAicmVjdGFuZ2xlLmFuZC5oYW5kLnBvaW50LnVwLmxlZnQiKQoJCQkJCQkJfQoJCQkJCQkJLnRhZyhJbnQobm9kZS5udW0pKQoJCQkJCQl9IGVsc2UgaWYgIVVzZXJEZWZhdWx0cy5lbmFibGVBZG1pbmlzdHJhdGlvbiB7CgkJCQkJCQlMYWJlbCB7CgkJCQkJCQkJVGV4dCgiUmVxdWVzdCBMZWdhY3kgQWRtaW46IFwobm9kZS51c2VyTG9uZ05hbWU/LmFkZGluZ1ZhcmlhdGlvblNlbGVjdG9ycyA/PyAiVW5rbm93biIubG9jYWxpemVkKSIpCgkJCQkJCQl9IGljb246IHsKCQkJCQkJCQlJbWFnZShzeXN0ZW1OYW1lOiAicmVjdGFuZ2xlLmFuZC5oYW5kLnBvaW50LnVwLmxlZnQiKQoJCQkJCQkJfQoJCQkJCQkJLnRhZyhJbnQobm9kZS5udW0pKQoJCQkJCQl9CgkJCQkJfQoJCQkJfQoJCQkJLnBpY2tlclN0eWxlKC5uYXZpZ2F0aW9uTGluaykKCQkJCS5vbkNoYW5nZShvZjogc2VsZWN0ZWROb2RlKSB7IF8sIG5ld1ZhbHVlIGluCgkJCQkJaGFuZGxlU2VsZWN0ZWROb2RlQ2hhbmdlKG5ld1ZhbHVlKQoJCQkJfQ==", "CQkJCU5hdmlnYXRpb25MaW5rIHsKCQkJCQlTZXR0aW5nc05vZGVQaWNrZXIoCgkJCQkJCW5vZGVzOiBzb3J0ZWROb2RlcywKCQkJCQkJc2VsZWN0ZWROb2RlOiAkc2VsZWN0ZWROb2RlCgkJCQkJKQoJCQkJfSBsYWJlbDogewoJCQkJCUhTdGFjayB7CgkJCQkJCVRleHQoIk5vZGUiKQoJCQkJCQlTcGFjZXIoKQoJCQkJCQlUZXh0KG5vZGVTbmFwc2hvdChmb3I6IHNlbGVjdGVkTm9kZSk/LnVzZXJMb25nTmFtZT8uYWRkaW5nVmFyaWF0aW9uU2VsZWN0b3JzID8/ICJDb25uZWN0IHRvIGEgTm9kZSIubG9jYWxpemVkKQoJCQkJCQkJLmZvcmVncm91bmRTdHlsZSguc2Vjb25kYXJ5KQoJCQkJCQkJLmxpbmVMaW1pdCgxKQoJCQkJCX0KCQkJCX0KCQkJCS5vbkNoYW5nZShvZjogc2VsZWN0ZWROb2RlKSB7IF8sIG5ld1ZhbHVlIGluCgkJCQkJaGFuZGxlU2VsZWN0ZWROb2RlQ2hhbmdlKG5ld1ZhbHVlKQoJCQkJfQ==")
+          ]
+
+          for old64, new64 in pairs:
+              old = base64.b64decode(old64).decode()
+              new = base64.b64decode(new64).decode()
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"Expected one match, found {count}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+
+      - name: Commit patch
+        run: |
+          rm -f .github/workflows/apply-node-picker-settings.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Meshtastic/Views/Settings/Settings.swift .github/workflows/apply-node-picker-settings.yml
+          git commit -m "feat: integrate searchable remote admin node picker"
+          git push origin HEAD:feature/remote-admin-ux
