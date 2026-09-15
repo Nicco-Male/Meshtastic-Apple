@@ -51,13 +51,40 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist" || true
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" || true
 
-          rm -rf "$RUNNER_TEMP/Payload"
-          mkdir -p "$RUNNER_TEMP/Payload"
-          cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/"
+          echo "Embedded app extensions before sideload stripping:"
+          find "$APP_PATH" -maxdepth 4 \( -name '*.appex' -o -name '*.app' \) -print || true
 
-          cd "$RUNNER_TEMP"
-          /usr/bin/zip -qry Meshtastic-Mod.ipa Payload
-          shasum -a 256 Meshtastic-Mod.ipa | tee Meshtastic-Mod.ipa.sha256
+          # Full IPA, preserving Watch app and extensions.
+          rm -rf "$RUNNER_TEMP/full"
+          mkdir -p "$RUNNER_TEMP/full/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/full/Payload/"
+          (
+            cd "$RUNNER_TEMP/full"
+            /usr/bin/zip -qry "$RUNNER_TEMP/Meshtastic-Mod.ipa" Payload
+          )
+          shasum -a 256 "$RUNNER_TEMP/Meshtastic-Mod.ipa" | tee "$RUNNER_TEMP/Meshtastic-Mod.ipa.sha256"
+
+          # Sideload-friendly IPA for free Apple IDs / Sideloadly.
+          # Sideloadly rewrites the main bundle identifier when signing with a
+          # Personal Team. Embedded Watch apps/extensions can retain references
+          # to the original companion bundle ID and make iOS reject the install.
+          rm -rf "$RUNNER_TEMP/sideload"
+          mkdir -p "$RUNNER_TEMP/sideload/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/sideload/Payload/"
+
+          SIDELOAD_APP="$RUNNER_TEMP/sideload/Payload/Meshtastic.app"
+          rm -rf "$SIDELOAD_APP/Watch"
+          rm -rf "$SIDELOAD_APP/PlugIns"
+          rm -rf "$SIDELOAD_APP/AppClips"
+
+          echo "Embedded app extensions after sideload stripping:"
+          find "$SIDELOAD_APP" -maxdepth 4 \( -name '*.appex' -o -name '*.app' \) -print || true
+
+          (
+            cd "$RUNNER_TEMP/sideload"
+            /usr/bin/zip -qry "$RUNNER_TEMP/Meshtastic-Mod-Sideload.ipa" Payload
+          )
+          shasum -a 256 "$RUNNER_TEMP/Meshtastic-Mod-Sideload.ipa" | tee "$RUNNER_TEMP/Meshtastic-Mod-Sideload.ipa.sha256"
 
       - name: Upload Meshtastic Mod IPA
         uses: actions/upload-artifact@v7
@@ -66,6 +93,8 @@ jobs:
           path: |
             ${{ runner.temp }}/Meshtastic-Mod.ipa
             ${{ runner.temp }}/Meshtastic-Mod.ipa.sha256
+            ${{ runner.temp }}/Meshtastic-Mod-Sideload.ipa
+            ${{ runner.temp }}/Meshtastic-Mod-Sideload.ipa.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
