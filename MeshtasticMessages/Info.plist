@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>Meshtastic</string>
+	<string>Meshtastic Mod</string>
 	<key>MeshtasticMessageSharingAccessGroup</key>
-	<string>$(AppIdentifierPrefix)gvh.MeshtasticClient.MessagesSharing</string>
+	<string>$(AppIdentifierPrefix)com.niccomale.meshtasticmod.MessagesSharing</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>
