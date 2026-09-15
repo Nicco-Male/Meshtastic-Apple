@@ -1,0 +1,90 @@
+name: Apply robust settings picker integration
+
+on:
+  push:
+    branches:
+      - feature/remote-admin-ux
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/remote-admin-ux
+
+      - name: Patch Settings.swift
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("Meshtastic/Views/Settings/Settings.swift")
+          text = path.read_text()
+
+          def replace_once(old, new):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"Expected one match, found {count}: {old[:80]!r}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              "\tlet userLongName: String?\n\tlet userIsLicensed: Bool",
+              "\tlet userLongName: String?\n\tlet userShortName: String?\n\tlet userIsLicensed: Bool"
+          )
+          replace_once(
+              "\t\t\tuserLongName = user.longName\n\t\t\tuserIsLicensed = user.isLicensed",
+              "\t\t\tuserLongName = user.longName\n\t\t\tuserShortName = user.shortName\n\t\t\tuserIsLicensed = user.isLicensed"
+          )
+          replace_once(
+              "\t\t\tuserLongName = nil\n\t\t\tuserIsLicensed = false",
+              "\t\t\tuserLongName = nil\n\t\t\tuserShortName = nil\n\t\t\tuserIsLicensed = false"
+          )
+
+          start_marker = '\t\t\t\tPicker("Node", selection: $selectedNode) {'
+          end_marker = (
+              '\t\t\t\t.onChange(of: selectedNode) { _, newValue in\n'
+              '\t\t\t\t\thandleSelectedNodeChange(newValue)\n'
+              '\t\t\t\t}'
+          )
+          start = text.find(start_marker)
+          if start < 0:
+              raise RuntimeError("Picker start marker not found")
+          end_start = text.find(end_marker, start)
+          if end_start < 0:
+              raise RuntimeError("Picker end marker not found")
+          end = end_start + len(end_marker)
+
+          replacement = (
+              '\t\t\t\tNavigationLink {\n'
+              '\t\t\t\t\tSettingsNodePicker(\n'
+              '\t\t\t\t\t\tnodes: sortedNodes,\n'
+              '\t\t\t\t\t\tselectedNode: $selectedNode\n'
+              '\t\t\t\t\t)\n'
+              '\t\t\t\t} label: {\n'
+              '\t\t\t\t\tHStack {\n'
+              '\t\t\t\t\t\tText("Node")\n'
+              '\t\t\t\t\t\tSpacer()\n'
+              '\t\t\t\t\t\tText(nodeSnapshot(for: selectedNode)?.userLongName?.addingVariationSelectors ?? "Connect to a Node".localized)\n'
+              '\t\t\t\t\t\t\t.foregroundStyle(.secondary)\n'
+              '\t\t\t\t\t\t\t.lineLimit(1)\n'
+              '\t\t\t\t\t}\n'
+              '\t\t\t\t}\n'
+              '\t\t\t\t.onChange(of: selectedNode) { _, newValue in\n'
+              '\t\t\t\t\thandleSelectedNodeChange(newValue)\n'
+              '\t\t\t\t}'
+          )
+          text = text[:start] + replacement + text[end:]
+          path.write_text(text)
+
+      - name: Commit patch
+        run: |
+          rm -f .github/workflows/apply-node-picker-settings-v2.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Meshtastic/Views/Settings/Settings.swift .github/workflows/apply-node-picker-settings-v2.yml
+          git commit -m "feat: integrate searchable remote admin node picker"
+          git push origin HEAD:feature/remote-admin-ux
