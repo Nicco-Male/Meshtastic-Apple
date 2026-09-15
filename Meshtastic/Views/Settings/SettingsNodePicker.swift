@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// Searchable replacement for the old navigation-link Picker used by Settings > Configure.
@@ -109,7 +110,6 @@ struct SettingsNodePicker: View {
 							.font(.caption)
 							.foregroundStyle(.secondary)
 					}
-				}
 			} icon: {
 				Image(systemName: "circle")
 			}
