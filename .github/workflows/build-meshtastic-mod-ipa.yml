@@ -1,0 +1,71 @@
+name: Build Meshtastic Mod IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+
+      - name: Build unsigned iPhone app
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -workspace Meshtastic.xcworkspace \
+            -scheme Meshtastic \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/MeshtasticDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild-ipa.log"
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/MeshtasticDerivedData/Build/Products/Debug-iphoneos/Meshtastic.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Meshtastic.app not found at expected path: $APP_PATH" >&2
+            find "$RUNNER_TEMP/MeshtasticDerivedData/Build/Products" -maxdepth 3 -type d -name '*.app' -print || true
+            exit 1
+          fi
+
+          echo "Built app identity:"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist" || true
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" || true
+
+          rm -rf "$RUNNER_TEMP/Payload"
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/"
+
+          cd "$RUNNER_TEMP"
+          /usr/bin/zip -qry Meshtastic-Mod.ipa Payload
+          shasum -a 256 Meshtastic-Mod.ipa | tee Meshtastic-Mod.ipa.sha256
+
+      - name: Upload Meshtastic Mod IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Meshtastic-Mod-IPA-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/Meshtastic-Mod.ipa
+            ${{ runner.temp }}/Meshtastic-Mod.ipa.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
