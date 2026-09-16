@@ -26,19 +26,33 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("Meshtastic/MeshtasticAppDelegate.swift")
-          source = path.read_text()
-          old = '''\t\tINPreferences.requestSiriAuthorization { status in
+          app_delegate_path = Path("Meshtastic/MeshtasticAppDelegate.swift")
+          app_delegate = app_delegate_path.read_text()
+          old_app_delegate = '''\t\tINPreferences.requestSiriAuthorization { status in
           \t\t\tLogger.services.info("Siri authorization status: \\(String(describing: status))")
           \t\t}
           '''
-          new = '''\t\t// Sideload/Personal Team builds cannot receive the Siri entitlement.
+          new_app_delegate = '''\t\t// Sideload/Personal Team builds cannot receive the Siri entitlement.
           \t\t// Calling requestSiriAuthorization without that entitlement aborts at launch.
           \t\tLogger.services.info("Skipping Siri authorization request in sideload build")
           '''
-          if old not in source:
+          if old_app_delegate not in app_delegate:
               raise SystemExit("Expected Siri authorization block not found; update sideload patch")
-          path.write_text(source.replace(old, new, 1))
+          app_delegate_path.write_text(app_delegate.replace(old_app_delegate, new_app_delegate, 1))
+
+          onboarding_path = Path("Meshtastic/Views/Onboarding/DeviceOnboarding.swift")
+          onboarding = onboarding_path.read_text()
+          old_onboarding = '''\t\t\t\t\tawait requestSiriPermissions()
+          \t\t\t\t\tawait goToNextStep(after: .siri)
+          '''
+          new_onboarding = '''\t\t\t\t\t// Sideload/Personal Team builds do not have the Siri entitlement.
+          \t\t\t\t\t// Skip the authorization API and continue onboarding normally.
+          \t\t\t\t\tLogger.services.info("Skipping Siri onboarding permission request in sideload build")
+          \t\t\t\t\tawait goToNextStep(after: .siri)
+          '''
+          if old_onboarding not in onboarding:
+              raise SystemExit("Expected Siri onboarding block not found; update sideload patch")
+          onboarding_path.write_text(onboarding.replace(old_onboarding, new_onboarding, 1))
           PY
 
       - name: Build unsigned iPhone app
