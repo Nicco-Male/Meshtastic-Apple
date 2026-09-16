@@ -60,25 +60,14 @@ struct RequestLocalStatsButton: View {
 	@StateObject private var rateLimitStorage = RateLimitStorage.shared
 
 	var node: NodeInfoEntity
-	var title = "Request Telemetry"
-	var cooldownTitle = "Telemetry"
-	var systemImage = "waveform.path.ecg"
 
 	@State private var presentedSheet: TelemetryRequestSheet?
 	@State private var sentRequest: TelemetryRequestKind?
 
 	var body: some View {
-		Menu {
-			telemetryMenuButton(.deviceMetrics)
-			telemetryMenuButton(.localStats)
-		} label: {
-			Label {
-				Text(title)
-					.lineLimit(1)
-			} icon: {
-				Image(systemName: systemImage)
-					.symbolRenderingMode(.hierarchical)
-			}
+		Group {
+			telemetryButton(.deviceMetrics)
+			telemetryButton(.localStats)
 		}
 		.alert(item: $sentRequest) { kind in
 			Alert(
@@ -95,7 +84,7 @@ struct RequestLocalStatsButton: View {
 	}
 
 	@ViewBuilder
-	private func telemetryMenuButton(_ kind: TelemetryRequestKind) -> some View {
+	private func telemetryButton(_ kind: TelemetryRequestKind) -> some View {
 		let completion = rateLimitStorage.rateLimitRemainingPercentage(forKey: kind.rateLimitKey)
 		let secondsRemaining = rateLimitStorage.rateLimitSecondsRemaining(forKey: kind.rateLimitKey)
 
@@ -153,7 +142,7 @@ private struct TelemetryRequestMethodSheet: View {
 
 	private var destination: Int64 { node.user?.num ?? 0 }
 	private var destinationPublicKey: Data? { node.user?.publicKey }
-	private var remoteAdminAvailable: Bool {
+	private var directPKIAvailable: Bool {
 		LocalStatsRequestTransport.remoteAdminAvailable(for: destinationPublicKey)
 	}
 
@@ -161,7 +150,7 @@ private struct TelemetryRequestMethodSheet: View {
 		NavigationStack {
 			List {
 				Section("Send \(kind.title.lowercased()) request") {
-					Text("Choose the encryption method for this request to \(node.user?.longName ?? "this node").")
+					Text("Choose how to encrypt this request to \(node.user?.longName ?? "this node"). The request is addressed only to that node.")
 						.foregroundStyle(.secondary)
 				}
 
@@ -172,7 +161,7 @@ private struct TelemetryRequestMethodSheet: View {
 						Label {
 							VStack(alignment: .leading, spacing: 3) {
 								Text("Shared channel")
-								Text("Encrypted with this mesh channel. Use this for ordinary sharing.")
+								Text("Encrypt with the shared mesh channel. This is still a request to this node, not a channel-wide telemetry request.")
 									.font(.footnote)
 									.foregroundStyle(.secondary)
 							}
@@ -187,9 +176,9 @@ private struct TelemetryRequestMethodSheet: View {
 					} label: {
 						Label {
 							VStack(alignment: .leading, spacing: 3) {
-								Text("Remote admin")
-								Text(remoteAdminAvailable
-									? "Uses PKI. The node must authorize your identity as a remote admin."
+								Text("Direct PKI")
+								Text(directPKIAvailable
+									? "Encrypt directly to this node using its public key. Remote Admin permission is not required."
 									: "Unavailable because this node has no public key.")
 									.font(.footnote)
 									.foregroundStyle(.secondary)
@@ -198,10 +187,10 @@ private struct TelemetryRequestMethodSheet: View {
 							Image(systemName: "lock.fill")
 						}
 					}
-					.disabled(isSending || !remoteAdminAvailable)
+					.disabled(isSending || !directPKIAvailable)
 				}
 			}
-			.navigationTitle("Request method")
+			.navigationTitle("Encryption method")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) {
@@ -292,7 +281,7 @@ extension AccessoryManager {
 			transport: transport,
 			destinationPublicKey: destinationPublicKey
 		) else {
-			throw AccessoryError.ioFailed("sendDeviceMetricsRequest: Remote admin requires the destination public key")
+			throw AccessoryError.ioFailed("sendDeviceMetricsRequest: Direct PKI requires the destination public key")
 		}
 
 		var dataMessage = DataMessage()
