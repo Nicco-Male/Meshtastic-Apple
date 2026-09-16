@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>MeshtasticMessageSharingAccessGroup</key>
-	<string>$(AppIdentifierPrefix)gvh.MeshtasticClient.MessagesSharing</string>
+	<string>$(AppIdentifierPrefix)com.niccomale.meshtasticmod.MessagesSharing</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Meshtastic</string>
+	<string>Meshtastic Mod</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

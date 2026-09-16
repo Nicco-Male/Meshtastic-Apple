@@ -1,0 +1,197 @@
+name: Build Meshtastic Mod IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+
+      - name: Prepare sideload compatibility
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          app_delegate_path = Path("Meshtastic/MeshtasticAppDelegate.swift")
+          app_delegate = app_delegate_path.read_text()
+          old_app_delegate = '''\t\tINPreferences.requestSiriAuthorization { status in
+          \t\t\tLogger.services.info("Siri authorization status: \\(String(describing: status))")
+          \t\t}
+          '''
+          new_app_delegate = '''\t\t// Sideload/Personal Team builds cannot receive the Siri entitlement.
+          \t\t// Calling requestSiriAuthorization without that entitlement aborts at launch.
+          \t\tLogger.services.info("Skipping Siri authorization request in sideload build")
+          '''
+          if old_app_delegate not in app_delegate:
+              raise SystemExit("Expected Siri authorization block not found; update sideload patch")
+          app_delegate_path.write_text(app_delegate.replace(old_app_delegate, new_app_delegate, 1))
+
+          onboarding_path = Path("Meshtastic/Views/Onboarding/DeviceOnboarding.swift")
+          onboarding = onboarding_path.read_text()
+          old_onboarding = '''\t\t\t\t\tawait requestSiriPermissions()
+          \t\t\t\t\tawait goToNextStep(after: .siri)
+          '''
+          new_onboarding = '''\t\t\t\t\t// Sideload/Personal Team builds do not have the Siri entitlement.
+          \t\t\t\t\t// Skip the authorization API and continue onboarding normally.
+          \t\t\t\t\tLogger.services.info("Skipping Siri onboarding permission request in sideload build")
+          \t\t\t\t\tawait goToNextStep(after: .siri)
+          '''
+          if old_onboarding not in onboarding:
+              raise SystemExit("Expected Siri onboarding block not found; update sideload patch")
+          onboarding_path.write_text(onboarding.replace(old_onboarding, new_onboarding, 1))
+
+          # Personal-Team/Sideloadly compatibility: foreground BLE does not need
+          # CoreBluetooth state restoration.  Avoid restoration identifiers in the
+          # sideload build so discovery uses a plain CBCentralManager and does not
+          # depend on background restoration behavior after the bundle ID is mangled.
+          ble_transport_path = Path("Meshtastic/Accessory/Transports/Bluetooth Low Energy/BLETransport.swift")
+          ble_transport = ble_transport_path.read_text()
+          old_ble_options = '''\tstatic func centralManagerOptions(restoreIdentifier: String) -> [String: Any] {
+          \t\t[
+          \t\t\tCBCentralManagerOptionRestoreIdentifierKey: restoreIdentifier,
+          \t\t\tCBCentralManagerOptionShowPowerAlertKey: false
+          \t\t]
+          \t}
+          '''
+          new_ble_options = '''\tstatic func centralManagerOptions(restoreIdentifier: String) -> [String: Any] {
+          \t\t// Sideload compatibility: keep foreground BLE scanning independent from
+          \t\t// state restoration/background relaunch privileges and rewritten bundle IDs.
+          \t\t_ = restoreIdentifier
+          \t\treturn [CBCentralManagerOptionShowPowerAlertKey: false]
+          \t}
+          '''
+          if old_ble_options not in ble_transport:
+              raise SystemExit("Expected BLE central-manager options block not found; update sideload patch")
+          ble_transport_path.write_text(ble_transport.replace(old_ble_options, new_ble_options, 1))
+
+          # Keep the authorization helper alive while CoreBluetooth is temporarily
+          # .unknown/.resetting.  The upstream helper cleared its continuation even
+          # though it intentionally waited for a later state transition.
+          ble_auth_path = Path("Meshtastic/Accessory/Transports/Bluetooth Low Energy/BLEAuthorizationHelper.swift")
+          ble_auth = ble_auth_path.read_text()
+          old_ble_auth = '''\t\tcase .resetting, .unknown:
+          \t\t\t// The state is temporary or unknown. We wait for the next state update.
+          \t\t\t// Do nothing and let the continuation live.
+          \t\t\tbreak
+
+          \t\t@unknown default:
+          \t\t\t// Handle any future cases gracefully.
+          \t\t\tcontinuation?.resume(returning: false)
+          \t\t}
+          \t\t
+          \t\t// Clean up to prevent resuming more than once.
+          \t\tself.continuation = nil
+          '''
+          new_ble_auth = '''\t\tcase .resetting, .unknown:
+          \t\t\t// Temporary states are not an authorization result. Keep both the
+          \t\t\t// manager and continuation alive until CoreBluetooth reports a final state.
+          \t\t\treturn
+
+          \t\t@unknown default:
+          \t\t\t// Handle any future cases gracefully.
+          \t\t\tcontinuation?.resume(returning: false)
+          \t\t}
+          \t\t
+          \t\t// Clean up only after a final state to prevent resuming more than once.
+          \t\tself.continuation = nil
+          \t\tself.centralManager = nil
+          '''
+          if old_ble_auth not in ble_auth:
+              raise SystemExit("Expected BLE authorization state block not found; update sideload patch")
+          ble_auth_path.write_text(ble_auth.replace(old_ble_auth, new_ble_auth, 1))
+          PY
+
+      - name: Build unsigned iPhone app
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -workspace Meshtastic.xcworkspace \
+            -scheme Meshtastic \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/MeshtasticDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild-ipa.log"
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/MeshtasticDerivedData/Build/Products/Debug-iphoneos/Meshtastic.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Meshtastic.app not found at expected path: $APP_PATH" >&2
+            find "$RUNNER_TEMP/MeshtasticDerivedData/Build/Products" -maxdepth 3 -type d -name '*.app' -print || true
+            exit 1
+          fi
+
+          echo "Built app identity:"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist" || true
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" || true
+          echo "Bluetooth privacy/background configuration:"
+          /usr/libexec/PlistBuddy -c 'Print :NSBluetoothAlwaysUsageDescription' "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$APP_PATH/Info.plist" || true
+
+          echo "Embedded app extensions before sideload stripping:"
+          find "$APP_PATH" -maxdepth 4 \( -name '*.appex' -o -name '*.app' \) -print || true
+
+          # Full IPA, preserving Watch app and extensions.
+          rm -rf "$RUNNER_TEMP/full"
+          mkdir -p "$RUNNER_TEMP/full/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/full/Payload/"
+          (
+            cd "$RUNNER_TEMP/full"
+            /usr/bin/zip -qry "$RUNNER_TEMP/Meshtastic-Mod.ipa" Payload
+          )
+          shasum -a 256 "$RUNNER_TEMP/Meshtastic-Mod.ipa" | tee "$RUNNER_TEMP/Meshtastic-Mod.ipa.sha256"
+
+          # Sideload-friendly IPA for free Apple IDs / Sideloadly.
+          # Sideloadly rewrites the main bundle identifier when signing with a
+          # Personal Team. Embedded Watch apps/extensions can retain references
+          # to the original companion bundle ID and make iOS reject the install.
+          rm -rf "$RUNNER_TEMP/sideload"
+          mkdir -p "$RUNNER_TEMP/sideload/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/sideload/Payload/"
+
+          SIDELOAD_APP="$RUNNER_TEMP/sideload/Payload/Meshtastic.app"
+          rm -rf "$SIDELOAD_APP/Watch"
+          rm -rf "$SIDELOAD_APP/PlugIns"
+          rm -rf "$SIDELOAD_APP/AppClips"
+
+          echo "Embedded app extensions after sideload stripping:"
+          find "$SIDELOAD_APP" -maxdepth 4 \( -name '*.appex' -o -name '*.app' \) -print || true
+
+          (
+            cd "$RUNNER_TEMP/sideload"
+            /usr/bin/zip -qry "$RUNNER_TEMP/Meshtastic-Mod-Sideload.ipa" Payload
+          )
+          shasum -a 256 "$RUNNER_TEMP/Meshtastic-Mod-Sideload.ipa" | tee "$RUNNER_TEMP/Meshtastic-Mod-Sideload.ipa.sha256"
+
+      - name: Upload Meshtastic Mod IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: Meshtastic-Mod-IPA-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/Meshtastic-Mod.ipa
+            ${{ runner.temp }}/Meshtastic-Mod.ipa.sha256
+            ${{ runner.temp }}/Meshtastic-Mod-Sideload.ipa
+            ${{ runner.temp }}/Meshtastic-Mod-Sideload.ipa.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

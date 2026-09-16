@@ -1,5 +1,6 @@
 import SwiftUI
 import OSLog
+import MeshtasticProtobufs
 
 enum LocalStatsRequestTransport {
 	case sharedChannel
@@ -14,108 +15,142 @@ enum LocalStatsRequestTransport {
 	}
 }
 
+enum TelemetryRequestKind: String, Identifiable {
+	case deviceMetrics
+	case localStats
+
+	var id: String { rawValue }
+
+	var title: String {
+		switch self {
+		case .deviceMetrics: return "Device Metrics"
+		case .localStats: return "Local Stats"
+		}
+	}
+
+	var requestTitle: String {
+		switch self {
+		case .deviceMetrics: return "Request Telemetry"
+		case .localStats: return "Request Local Stats"
+		}
+	}
+
+	var systemImage: String {
+		switch self {
+		case .deviceMetrics: return "waveform.path.ecg"
+		case .localStats: return "chart.bar"
+		}
+	}
+
+	var rateLimitKey: String {
+		switch self {
+		case .deviceMetrics: return "deviceMetricsRequest"
+		case .localStats: return "localstats"
+		}
+	}
+}
+
+private struct TelemetryRequestSheet: Identifiable {
+	let id = UUID()
+	let kind: TelemetryRequestKind
+}
+
 struct RequestLocalStatsButton: View {
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	@StateObject private var rateLimitStorage = RateLimitStorage.shared
 
 	var node: NodeInfoEntity
-	var title = "Request Local Stats"
-	var cooldownTitle = "Local Stats"
-	var systemImage = "chart.bar"
 
-	@State
-	private var isPresentingLocalStatsSentAlert: Bool = false
-	@State
-	private var presentedSheet: LocalStatsRequestSheet?
-
-	private enum LocalStatsRequestSheet: String, Identifiable {
-		case method
-
-		var id: String { rawValue }
-	}
+	@State private var presentedSheet: TelemetryRequestSheet?
+	@State private var sentRequest: TelemetryRequestKind?
 
 	var body: some View {
-		let completion = rateLimitStorage.rateLimitRemainingPercentage(forKey: "localstats")
-		let secondsRemaining = rateLimitStorage.rateLimitSecondsRemaining(forKey: "localstats")
 		Group {
-			if completion > 0.0 {
-				Label {
-					Text("\(cooldownTitle) \(Int(secondsRemaining))s")
-						.foregroundStyle(.secondary)
-						.lineLimit(1)
-				} icon: {
-					Image("progress.ring.dashed", variableValue: completion)
-						.foregroundStyle(.secondary)
-				}.disabled(true)
-			} else {
-				Button(action: requestLocalStats) {
-					Label {
-					Text(title)
-						.lineLimit(1)
-					} icon: {
-					Image(systemName: systemImage)
-						.symbolRenderingMode(.hierarchical)
-					}
-				}
+			telemetryButton(.deviceMetrics)
+			telemetryButton(.localStats)
+		}
+		.alert(item: $sentRequest) { kind in
+			Alert(
+				title: Text("\(kind.title) Requested"),
+				message: Text("A \(kind.title.lowercased()) request has been sent to \(node.user?.longName ?? "this node"). Responses can take some time."),
+				dismissButton: .default(Text("OK"))
+			)
+		}
+		.sheet(item: $presentedSheet) { sheet in
+			TelemetryRequestMethodSheet(node: node, kind: sheet.kind) { kind in
+				sentRequest = kind
 			}
-		}
-		.alert("Local Stats Requested", isPresented: $isPresentingLocalStatsSentAlert) {
-			Button("OK", role: .cancel) { }
-		} message: {
-			Text("A local stats request has been sent to \(node.user?.longName ?? "this node"). Responses can take some time.")
-		}
-		.sheet(item: $presentedSheet) { _ in
-			LocalStatsRequestMethodSheet(node: node)
 		}
 	}
 
-	private func requestLocalStats() {
+	@ViewBuilder
+	private func telemetryButton(_ kind: TelemetryRequestKind) -> some View {
+		let completion = rateLimitStorage.rateLimitRemainingPercentage(forKey: kind.rateLimitKey)
+		let secondsRemaining = rateLimitStorage.rateLimitSecondsRemaining(forKey: kind.rateLimitKey)
+
+		Button {
+			request(kind)
+		} label: {
+			if completion > 0.0 {
+				Label("\(kind.title) \(Int(secondsRemaining))s", systemImage: "clock")
+			} else {
+				Label(kind.requestTitle, systemImage: kind.systemImage)
+			}
+		}
+		.disabled(completion > 0.0)
+	}
+
+	private func request(_ kind: TelemetryRequestKind) {
 		let destination = node.user?.num ?? 0
 		let source = accessoryManager.activeConnection?.device.num ?? 0
 		if LocalStatsRequestTransport.shouldChooseMethod(from: source, to: destination) {
-			presentedSheet = .method
+			presentedSheet = TelemetryRequestSheet(kind: kind)
 		} else {
-			sendLocalStats(transport: .sharedChannel)
+			send(kind, transport: .sharedChannel)
 		}
 	}
 
-	private func sendLocalStats(transport: LocalStatsRequestTransport) {
+	private func send(_ kind: TelemetryRequestKind, transport: LocalStatsRequestTransport) {
 		Task { @MainActor in
 			do {
-				try await accessoryManager.sendLocalStatsRequest(
+				try await accessoryManager.sendTelemetryRequest(
+					kind: kind,
 					destNum: node.user?.num ?? 0,
 					wantResponse: true,
 					transport: transport,
 					destinationPublicKey: node.user?.publicKey
 				)
-				rateLimitStorage.actionOccured(forKey: "localstats", rateLimit: 30.0)
-				isPresentingLocalStatsSentAlert = true
+				rateLimitStorage.actionOccured(forKey: kind.rateLimitKey, rateLimit: 30.0)
+				sentRequest = kind
 			} catch {
-				Logger.mesh.warning("Failed to send local stats request: \(error)")
+				Logger.mesh.warning("Failed to send \(kind.title, privacy: .public) request: \(error)")
 			}
 		}
 	}
 }
 
-private struct LocalStatsRequestMethodSheet: View {
+private struct TelemetryRequestMethodSheet: View {
 	@Environment(\.dismiss) private var dismiss
 	@EnvironmentObject private var accessoryManager: AccessoryManager
 
 	let node: NodeInfoEntity
+	let kind: TelemetryRequestKind
+	let onSent: (TelemetryRequestKind) -> Void
+
 	@State private var errorMessage: String?
 	@State private var isSending = false
 
 	private var destination: Int64 { node.user?.num ?? 0 }
 	private var destinationPublicKey: Data? { node.user?.publicKey }
-	private var remoteAdminAvailable: Bool {
+	private var directPKIAvailable: Bool {
 		LocalStatsRequestTransport.remoteAdminAvailable(for: destinationPublicKey)
 	}
 
 	var body: some View {
 		NavigationStack {
 			List {
-				Section("Send local stats request") {
-					Text("Choose the encryption method for this request to \(node.user?.longName ?? "this node").")
+				Section("Send \(kind.title.lowercased()) request") {
+					Text("Choose how to encrypt this request to \(node.user?.longName ?? "this node"). The request is addressed only to that node.")
 						.foregroundStyle(.secondary)
 				}
 
@@ -126,7 +161,7 @@ private struct LocalStatsRequestMethodSheet: View {
 						Label {
 							VStack(alignment: .leading, spacing: 3) {
 								Text("Shared channel")
-								Text("Encrypted with this mesh channel. Use this for ordinary sharing.")
+								Text("Encrypt with the shared mesh channel. This is still a request to this node, not a channel-wide telemetry request.")
 									.font(.footnote)
 									.foregroundStyle(.secondary)
 							}
@@ -141,9 +176,9 @@ private struct LocalStatsRequestMethodSheet: View {
 					} label: {
 						Label {
 							VStack(alignment: .leading, spacing: 3) {
-								Text("Remote admin")
-								Text(remoteAdminAvailable
-									? "Uses PKI. The node must authorize your identity as a remote admin."
+								Text("Direct PKI")
+								Text(directPKIAvailable
+									? "Encrypt directly to this node using its public key. Remote Admin permission is not required."
 									: "Unavailable because this node has no public key.")
 									.font(.footnote)
 									.foregroundStyle(.secondary)
@@ -152,17 +187,20 @@ private struct LocalStatsRequestMethodSheet: View {
 							Image(systemName: "lock.fill")
 						}
 					}
-					.disabled(isSending || !remoteAdminAvailable)
+					.disabled(isSending || !directPKIAvailable)
 				}
 			}
-			.navigationTitle("Request method")
+			.navigationTitle("Encryption method")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) {
 					Button("Cancel") { dismiss() }
 				}
 			}
-			.alert("Couldn’t send Local Stats request", isPresented: .constant(errorMessage != nil)) {
+			.alert("Couldn't send \(kind.title) request", isPresented: Binding(
+				get: { errorMessage != nil },
+				set: { if !$0 { errorMessage = nil } }
+			)) {
 				Button("OK") { errorMessage = nil }
 			} message: {
 				Text(errorMessage ?? "")
@@ -174,19 +212,96 @@ private struct LocalStatsRequestMethodSheet: View {
 		isSending = true
 		Task { @MainActor in
 			do {
-				try await accessoryManager.sendLocalStatsRequest(
+				try await accessoryManager.sendTelemetryRequest(
+					kind: kind,
 					destNum: destination,
 					wantResponse: true,
 					transport: transport,
 					destinationPublicKey: destinationPublicKey
 				)
-				RateLimitStorage.shared.actionOccured(forKey: "localstats", rateLimit: 30.0)
+				RateLimitStorage.shared.actionOccured(forKey: kind.rateLimitKey, rateLimit: 30.0)
+				onSent(kind)
 				dismiss()
 			} catch {
 				errorMessage = error.localizedDescription
 				isSending = false
-				Logger.mesh.warning("Failed to send local stats request: \(error)")
+				Logger.mesh.warning("Failed to send \(kind.title, privacy: .public) request: \(error)")
 			}
 		}
+	}
+}
+
+extension AccessoryManager {
+	func sendTelemetryRequest(
+		kind: TelemetryRequestKind,
+		destNum: Int64,
+		wantResponse: Bool,
+		transport: LocalStatsRequestTransport = .sharedChannel,
+		destinationPublicKey: Data? = nil
+	) async throws {
+		switch kind {
+		case .localStats:
+			try await sendLocalStatsRequest(
+				destNum: destNum,
+				wantResponse: wantResponse,
+				transport: transport,
+				destinationPublicKey: destinationPublicKey
+			)
+		case .deviceMetrics:
+			try await sendDeviceMetricsRequest(
+				destNum: destNum,
+				wantResponse: wantResponse,
+				transport: transport,
+				destinationPublicKey: destinationPublicKey
+			)
+		}
+	}
+
+	private func sendDeviceMetricsRequest(
+		destNum: Int64,
+		wantResponse: Bool,
+		transport: LocalStatsRequestTransport,
+		destinationPublicKey: Data?
+	) async throws {
+		guard let fromNodeNum = activeConnection?.device.num else {
+			Logger.services.error("Error while sending device metrics request. No active device.")
+			throw AccessoryError.ioFailed("No active device")
+		}
+
+		var telemetryPacket = Telemetry()
+		telemetryPacket.deviceMetrics = DeviceMetrics()
+
+		var meshPacket = MeshPacket()
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.to = UInt32(destNum)
+		meshPacket.from = UInt32(fromNodeNum)
+		meshPacket.wantAck = true
+		guard LocalStatsRequestTransport.configure(
+			&meshPacket,
+			transport: transport,
+			destinationPublicKey: destinationPublicKey
+		) else {
+			throw AccessoryError.ioFailed("sendDeviceMetricsRequest: Direct PKI requires the destination public key")
+		}
+
+		var dataMessage = DataMessage()
+		guard let serializedData = try? telemetryPacket.serializedData() else {
+			throw AccessoryError.ioFailed("sendDeviceMetricsRequest: Unable to serialize telemetry packet")
+		}
+		dataMessage.payload = serializedData
+		dataMessage.portnum = PortNum.telemetryApp
+		dataMessage.wantResponse = wantResponse
+		meshPacket.decoded = dataMessage
+
+		var toRadio = ToRadio()
+		toRadio.packet = meshPacket
+
+		let logString = String.localizedStringWithFormat(
+			"📊 Sent Device Metrics Request from: %@ to: %@".localized,
+			String(fromNodeNum),
+			String(destNum)
+		)
+		try await send(toRadio, debugDescription: logString)
+		Logger.mesh.info("📊 \(logString, privacy: .public)")
 	}
 }
