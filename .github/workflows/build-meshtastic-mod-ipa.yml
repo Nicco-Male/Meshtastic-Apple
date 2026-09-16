@@ -53,6 +53,66 @@ jobs:
           if old_onboarding not in onboarding:
               raise SystemExit("Expected Siri onboarding block not found; update sideload patch")
           onboarding_path.write_text(onboarding.replace(old_onboarding, new_onboarding, 1))
+
+          # Personal-Team/Sideloadly compatibility: foreground BLE does not need
+          # CoreBluetooth state restoration.  Avoid restoration identifiers in the
+          # sideload build so discovery uses a plain CBCentralManager and does not
+          # depend on background restoration behavior after the bundle ID is mangled.
+          ble_transport_path = Path("Meshtastic/Accessory/Transports/Bluetooth Low Energy/BLETransport.swift")
+          ble_transport = ble_transport_path.read_text()
+          old_ble_options = '''\tstatic func centralManagerOptions(restoreIdentifier: String) -> [String: Any] {
+          \t\t[
+          \t\t\tCBCentralManagerOptionRestoreIdentifierKey: restoreIdentifier,
+          \t\t\tCBCentralManagerOptionShowPowerAlertKey: false
+          \t\t]
+          \t}
+          '''
+          new_ble_options = '''\tstatic func centralManagerOptions(restoreIdentifier: String) -> [String: Any] {
+          \t\t// Sideload compatibility: keep foreground BLE scanning independent from
+          \t\t// state restoration/background relaunch privileges and rewritten bundle IDs.
+          \t\t_ = restoreIdentifier
+          \t\treturn [CBCentralManagerOptionShowPowerAlertKey: false]
+          \t}
+          '''
+          if old_ble_options not in ble_transport:
+              raise SystemExit("Expected BLE central-manager options block not found; update sideload patch")
+          ble_transport_path.write_text(ble_transport.replace(old_ble_options, new_ble_options, 1))
+
+          # Keep the authorization helper alive while CoreBluetooth is temporarily
+          # .unknown/.resetting.  The upstream helper cleared its continuation even
+          # though it intentionally waited for a later state transition.
+          ble_auth_path = Path("Meshtastic/Accessory/Transports/Bluetooth Low Energy/BLEAuthorizationHelper.swift")
+          ble_auth = ble_auth_path.read_text()
+          old_ble_auth = '''\t\tcase .resetting, .unknown:
+          \t\t\t// The state is temporary or unknown. We wait for the next state update.
+          \t\t\t// Do nothing and let the continuation live.
+          \t\t\tbreak
+
+          \t\t@unknown default:
+          \t\t\t// Handle any future cases gracefully.
+          \t\t\tcontinuation?.resume(returning: false)
+          \t\t}
+          \t\t
+          \t\t// Clean up to prevent resuming more than once.
+          \t\tself.continuation = nil
+          '''
+          new_ble_auth = '''\t\tcase .resetting, .unknown:
+          \t\t\t// Temporary states are not an authorization result. Keep both the
+          \t\t\t// manager and continuation alive until CoreBluetooth reports a final state.
+          \t\t\treturn
+
+          \t\t@unknown default:
+          \t\t\t// Handle any future cases gracefully.
+          \t\t\tcontinuation?.resume(returning: false)
+          \t\t}
+          \t\t
+          \t\t// Clean up only after a final state to prevent resuming more than once.
+          \t\tself.continuation = nil
+          \t\tself.centralManager = nil
+          '''
+          if old_ble_auth not in ble_auth:
+              raise SystemExit("Expected BLE authorization state block not found; update sideload patch")
+          ble_auth_path.write_text(ble_auth.replace(old_ble_auth, new_ble_auth, 1))
           PY
 
       - name: Build unsigned iPhone app
@@ -84,6 +144,9 @@ jobs:
           echo "Built app identity:"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist" || true
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" || true
+          echo "Bluetooth privacy/background configuration:"
+          /usr/libexec/PlistBuddy -c 'Print :NSBluetoothAlwaysUsageDescription' "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$APP_PATH/Info.plist" || true
 
           echo "Embedded app extensions before sideload stripping:"
           find "$APP_PATH" -maxdepth 4 \( -name '*.appex' -o -name '*.app' \) -print || true
