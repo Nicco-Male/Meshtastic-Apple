@@ -1,4 +1,5 @@
 import Foundation
+import MeshtasticProtobufs
 import SwiftData
 import SwiftUI
 
@@ -25,7 +26,7 @@ struct SettingsNodePicker: View {
 		var sendFailures = 0
 		var phase: Phase = .sending
 
-		enum Phase {
+		enum Phase: Equatable {
 			case sending
 			case waiting
 			case success
@@ -60,31 +61,6 @@ struct SettingsNodePicker: View {
 		case serial
 		case storeForward
 		case telemetry
-
-		var title: String {
-			switch self {
-			case .device: return "Device"
-			case .display: return "Display"
-			case .network: return "Network"
-			case .position: return "Position"
-			case .power: return "Power"
-			case .security: return "Security"
-			case .bluetooth: return "Bluetooth"
-			case .lora: return "LoRa"
-			case .ambientLighting: return "Ambient Lighting"
-			case .audio: return "Audio"
-			case .cannedMessages: return "Canned Messages"
-			case .detectionSensor: return "Detection Sensor"
-			case .externalNotification: return "External Notification"
-			case .mqtt: return "MQTT"
-			case .neighborInfo: return "Neighbor Info"
-			case .rangeTest: return "Range Test"
-			case .paxCounter: return "PAX Counter"
-			case .serial: return "Serial"
-			case .storeForward: return "Store & Forward"
-			case .telemetry: return "Telemetry"
-			}
-		}
 	}
 
 	private var filteredNodes: [SettingsNodeSnapshot] {
