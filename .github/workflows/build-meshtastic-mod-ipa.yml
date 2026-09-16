@@ -21,6 +21,26 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
 
+      - name: Prepare sideload compatibility
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("Meshtastic/MeshtasticAppDelegate.swift")
+          source = path.read_text()
+          old = '''\t\tINPreferences.requestSiriAuthorization { status in
+          \t\t\tLogger.services.info("Siri authorization status: \\(String(describing: status))")
+          \t\t}
+          '''
+          new = '''\t\t// Sideload/Personal Team builds cannot receive the Siri entitlement.
+          \t\t// Calling requestSiriAuthorization without that entitlement aborts at launch.
+          \t\tLogger.services.info("Skipping Siri authorization request in sideload build")
+          '''
+          if old not in source:
+              raise SystemExit("Expected Siri authorization block not found; update sideload patch")
+          path.write_text(source.replace(old, new, 1))
+          PY
+
       - name: Build unsigned iPhone app
         run: |
           set -o pipefail
